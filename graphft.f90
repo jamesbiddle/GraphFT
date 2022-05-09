@@ -9,8 +9,8 @@ module graphft
     private
     type(NodePtr), allocatable :: nodes(:)
     type(EdgePtr), allocatable :: edges(:)
-    integer :: node_idx
-    integer :: edge_idx
+    integer :: node_idx = 0
+    integer :: edge_idx = 0
   contains
     final :: finalise_graph
     procedure :: get_node
@@ -38,8 +38,8 @@ module graphft
     private
     integer :: id
     type(EdgePtr),  dimension(:), allocatable :: edges
-    logical :: visited
-    integer :: distance
+    logical :: visited = .false.
+    integer :: distance = 0
   contains
     procedure :: get_id
     procedure :: write_node
@@ -65,7 +65,7 @@ module graphft
     type(Node), pointer :: start => null()
     type(Node), pointer :: end => null()
     integer :: weight = 1
-    logical :: traversed
+    logical :: traversed = .false.
   contains
     ! Branching point analysis
     procedure :: priority
@@ -477,6 +477,7 @@ contains
         temp_dist = current_node%distance + this_edge%weight
 
         if(temp_dist < neighbour%distance) neighbour%distance = temp_dist
+
 
       end if
     end do
