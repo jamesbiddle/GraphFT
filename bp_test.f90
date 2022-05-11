@@ -103,14 +103,55 @@ program test
   else
     write(*,*) 'Dists not allocated'
   end if
+  write(*,*)
+
+  write(*,*) "Graph with cycle"
+  call Graph(bp_graph, 4)
+  call bp_graph%add_edge(1, 2)
+  call bp_graph%add_edge(2, 3)
+  call bp_graph%add_edge(2, 3)
+  call bp_graph%add_edge(3, 2)
+  call bp_graph%add_edge(3, 4)
+  call bp_graph%add_edge(1, 4)
+  call bp_graph%add_edge(1, 4)
+
+  call bp_graph%bp_distances(dists)
+  if(allocated(dists)) then
+    write(*,*) "Dists:"
+    write(*,*) dists
+    write(*,*)
+  else
+    write(*,*) 'Dists not allocated'
+  end if
+
+
+  write(*,*) "Another graph with cycle"
+  call Graph(bp_graph, 5)
+  call bp_graph%add_edge(1, 5)
+  call bp_graph%add_edge(1, 5)
+
+  call bp_graph%add_edge(1, 2)
+  call bp_graph%add_edge(2, 5)
+
+  call bp_graph%add_edge(2, 3)
+  call bp_graph%add_edge(3, 2)
+
+  call bp_graph%add_edge(3, 4)
+  call bp_graph%add_edge(4, 3)
+  call bp_graph%add_edge(4, 4)
+
+  call bp_graph%bp_distances(dists)
+  if(allocated(dists)) then
+    write(*,*) "Dists:"
+    write(*,*) dists
+    write(*,*)
+  else
+    write(*,*) 'Dists not allocated'
+  end if
 
   open(101, file='test.graph', action='write', status='replace')
   call bp_graph%output_graph(101, 2, 1)
   close(101)
-  ! do i = 1, bp_graph%n_nodes()
-  !   call bp_graph%get_node(my_node, i, index=.true.)
-  !   write(*,*) my_node%get_id(), my_node%is_bp()
-  ! end do
 
   call bp_graph%delete_graph()
   if(allocated(dists)) deallocate(dists)

@@ -52,6 +52,7 @@ module graphft
     procedure :: get_id
     procedure :: n_edges => n_edges_node
     procedure :: edge_directions
+    procedure :: weights
     procedure, private :: get_edge_index => get_edge_index_node
     final :: delete_node
 
@@ -69,7 +70,11 @@ module graphft
     type(Node), pointer :: ptr => null()
   end type NodePtr
 
-  
+  type Path
+    integer, allocatable :: node_ids(:)
+    integer :: length = 0
+  end type Path
+
   type Edge
     private
     type(Node), pointer :: start => null()
@@ -80,7 +85,6 @@ module graphft
     generic :: write(formatted) => write_edge
     procedure :: write_edge
     ! Branching point analysis
-    procedure :: priority
   end type Edge
 
 
@@ -658,18 +662,14 @@ contains
   end subroutine update_distances
 
 
-  subroutine simplify_cycles(this)
-    ! Perform a depth-first search to identify all cycles and replace them with a single edge
-    class(Graph) :: this
-
-  end subroutine simplify_cycles
-
   subroutine bp_distances(this, dists)
     class(Graph), intent(in) :: this
     integer, allocatable :: dists(:)
 
     type(Node), pointer :: this_node, start_bp
     type(Edge), pointer :: this_edge
+    type(Path), allocatable :: paths(:)
+    type(Path) :: this_path
     integer, allocatable :: directions(:)
     integer, allocatable :: temp_dists(:)
     integer :: dist
@@ -693,23 +693,42 @@ contains
       if( .not. associated(start_bp)) exit
 
       ! Calculate the distance from this BP
-      dist = 0
-      call this%get_distance(start_bp, dist)
+      call this%get_distance(start_bp, this_path)
 
-      if(dist > 0) then
-        temp_dists = [temp_dists, dist]
-      end if
-
+      ! Store the path
+      paths = [paths, this_path]
+      ! Cleanup the temporary path
+      deallocate(this_path%node_ids)
+      this_path%length = 0
     end do
 
-    dists = temp_dists
-
     ! Check all edges were traversed
+    write(*,*) "Initial edge check"
+    do i = 1, this%n_edges()
+      this_edge => this%edges(i)%ptr
+      if( .not. this_edge%traversed) then
+        write(*,*) this_edge
+        ! call exit(1)
+      end if
+    end do
+
+    ! If no paths were found, return
+    if( .not. allocated(paths)) return
+
+    do i = 1, size(paths)
+      this_path = paths(i)
+      call fix_cycles()
+      paths(i) = this_path
+    end do
+
+    dists = paths%length
+
+    write(*,*)
+    write(*,*) "Final edge check"
     if(allocated(dists)) then
       do i = 1, this%n_edges()
         this_edge => this%edges(i)%ptr
         if( .not. this_edge%traversed) then
-          write(*,*) "Edge not traversed"
           write(*,*) this_edge
           call exit(1)
         end if
@@ -718,16 +737,60 @@ contains
 
     call this%reset()
 
+  contains
+
+    subroutine fix_cycles()
+      ! Scan a path for untraversed edges
+      ! If any our found, follow them and add their lengths to the length of the path
+      type(Node), pointer :: this_node
+      type(Edge), pointer :: this_edge
+      integer :: i, id
+
+      do i = 1, size(this_path%node_ids)
+        id = this_path%node_ids(i)
+        call this%get_node(this_node, id)
+        call dfs(this_node)
+      end do
+
+    end subroutine fix_cycles
+
+    recursive subroutine dfs(this_node)
+      ! Use a depth-first search to locate cycles and add them to the path
+      type(Node), pointer :: this_node
+
+      type(Edge), pointer :: this_edge
+      integer :: i
+
+      do i = 1, this_node%n_edges()
+        this_edge => this_node%edges(i)%ptr
+        ! If the edge is outgoing and not traversed, follow it
+        if(( .not. this_edge%traversed) .and. (associated(this_edge%start, this_node))) then
+          this_path%length = this_path%length + this_edge%weight
+          this_edge%traversed = .true.
+          ! If the edge goes to another node, recursively call this function
+          if(( .not. associated(this_edge%end, this_node))) call dfs(this_edge%end)
+        end if
+      end do
+
+    end subroutine dfs
+
   end subroutine bp_distances
 
 
-  recursive subroutine get_distance(this, start_node, dist)
+  recursive subroutine get_distance(this, start_node, this_path)
     class(Graph), intent(in) :: this
     type(Node), pointer, intent(in):: start_node
-    integer, intent(out) :: dist
+    ! integer, intent(out) :: dist
+    type(Path) :: this_path
 
     type(Node), pointer :: next_node
     type(Edge), pointer :: next_edge
+
+    if(allocated(this_path%node_ids)) then
+      this_path%node_ids = [this_path%node_ids, start_node%id]
+    else
+      this_path%node_ids = [start_node%id]
+    end if
 
     ! Find the next edge to follow
     call start_node%random_edge(next_edge)
@@ -738,7 +801,8 @@ contains
     end if
 
     ! Add the distance between the nodes and mark the edge as traversed
-    dist = dist + next_edge%weight
+    ! dist = dist + next_edge%weight
+    this_path%length = this_path%length + next_edge%weight
     next_edge%traversed = .true.
 
     ! Check if the start node has now been visited (i.e. all edges are traversed)
@@ -753,12 +817,12 @@ contains
       return
     else
       ! Else continue on
-      call this%get_distance(next_node, dist)
+      call this%get_distance(next_node, this_path)
     end if
 
   end subroutine get_distance
 
-
+  
   subroutine random_bp(this, bp)
     ! Select a random branching point that has not been visited
     class(Graph), intent(in) :: this
@@ -775,9 +839,9 @@ contains
       if(bp%is_bp() .and. (.not. bp%visited)) mask(i) = .true.
     end do
 
-    rand_idx = random_index_log(mask)
+    rand_idx = random_index(mask)
     if(rand_idx == -1) then
-      bp => null()
+      nullify(bp)
     else
       call this%get_node(bp, rand_idx, index=.true.)
     end if
@@ -987,6 +1051,23 @@ contains
   end subroutine edge_directions
 
 
+  subroutine weights(this, weight_arr)
+    ! Retrieve the weights of the edges connected to this node
+    class(Node) :: this
+    integer, allocatable :: weight_arr(:)
+
+    integer :: i
+
+    if(allocated(weight_arr)) deallocate(weight_arr)
+    allocate(weight_arr(this%n_edges()))
+
+    do i = 1, this%n_edges()
+      weight_arr(i) = this%edges(i)%ptr%weight
+    end do
+
+  end subroutine weights
+
+
   subroutine write_node(this, unit, iotype, v_list, iostat, iomsg)
     class(Node), intent(in) :: this     ! Object to write.
     integer, intent(in) :: unit         ! Internal unit to write to.
@@ -1030,27 +1111,16 @@ contains
 
   subroutine random_edge(this, chosen_edge)
     ! Choose a random outgoing edge from this node
-    ! If any edges have priority, only choose from them
     class(Node), target :: this
     type(Edge), pointer :: chosen_edge
 
     logical, allocatable :: mask(:)
     type(Edge), pointer :: this_edge
-    integer :: highest_priority
     integer :: edge_count, rand_idx
     integer :: i
 
     edge_count = this%n_edges()
     allocate(mask(edge_count))
-
-    ! Check if there are any un-traversed outgoing priority edges
-    highest_priority = 0
-    do i = 1, edge_count
-      this_edge => this%edges(i)%ptr
-      if(this_edge%traversed) cycle
-      if( .not. associated(this_edge%start, this)) cycle
-      if(this_edge%priority() > highest_priority) highest_priority = this_edge%priority()
-    end do
 
     mask = .false.
     do i = 1, edge_count
@@ -1060,13 +1130,11 @@ contains
       ! If the edge does not start at this node, skip it
       ! Note that due to self-loops, this is not equivalent to the edge ending at this node
       if( .not. associated(this_edge%start, this)) cycle
-      ! If the edge is not priority and there are priority edges, skip it
-      if(this_edge%priority() .ne. highest_priority) cycle
       mask(i) = .true.
     end do
 
     ! From the valid edges, choose one
-    rand_idx = random_index_log(mask)
+    rand_idx = random_index(mask)
     if(rand_idx == -1) then
       chosen_edge => null()
     else
@@ -1130,32 +1198,6 @@ contains
 
   end function initialise_edge
 
-
-  integer function priority(this)
-    ! Determine if this edge has priority
-    ! The highest priority edges will be traversed first
-    class(Edge), target :: this
-
-    type(Node), pointer :: end_node
-    type(Edge), pointer :: other_edge
-    integer :: i
-
-    ! Default priority
-    priority = 0
-    ! Touching points
-    if(this%end%n_edges() > 3) priority = 1
-
-    ! Cycles
-    end_node => this%end
-    do i = 1, end_node%n_edges()
-      other_edge => end_node%edges(i)%ptr
-      if(associated(other_edge, this)) cycle
-      if(associated(other_edge%end, this%start)) priority = 2
-    end do
-    ! Self-loops
-    if(associated(this%start, this%end)) priority = 3
-
-  end function priority
 
   subroutine write_edge(this, unit, iotype, v_list, iostat, iomsg)
     class(Edge), intent(in) :: this     ! Object to write.

@@ -60,9 +60,19 @@ program graph_test
   call test_graph%add_edge(1, 2)
   call test_graph%remove_edge(1, 2)
   call populated_graph_tests(2, 0, 0)
+
+  write(*,*)
+  write(*,*) "Test removing a specific edge"
+  call Graph(test_graph, 2)
+  call test_graph%add_edge(1, 2, 1)
+  call test_graph%add_edge(1, 2, 2)
   call test_graph%add_edge(1, 2, 3)
-  call test_graph%add_edge(1, 2, 5)
-  write(*,'(dt)') test_graph
+  call test_graph%remove_edge(1, 2, 2)
+  call test_graph%get_node(test_node, 1, index=.true.)
+  call edge_test(test_node, 2, [1, 3])
+
+
+  ! write(*,'(dt)') test_graph
 
   write(*,*)
   if(failed == 0) then
@@ -115,6 +125,24 @@ contains
   end subroutine populated_graph_tests
 
 
+  subroutine edge_test(this_node, n_edges_expected, weights_expected)
+    type(Node), pointer :: this_node
+    integer, intent(in) :: n_edges_expected, weights_expected(n_edges_expected)
+
+    integer, allocatable :: weights(:)
+    character(len=64) :: fmt
+
+    write(*, '(4x,a,i0,x,a)') "Number of edges: ", this_node%n_edges(), &
+        & test_int(this_node%n_edges(), n_edges_expected)
+    call this_node%weights(weights)
+
+    write(fmt, '(a,i0,a)')'(4x,a,', size(weights_expected), '(i0,x),a)'
+    write(*, fmt) "Weights: ", weights, &
+        & test_int_1d(weights, weights_expected)
+
+  end subroutine edge_test
+
+  
   function test_int(val, expected) result(pass_str)
     integer, intent(in) :: val, expected
     character(len=8) :: pass_str
@@ -127,6 +155,19 @@ contains
     end if
 
   end function test_int
+
+  function test_int_1d(val, expected) result(pass_str)
+    integer, intent(in), dimension(:) :: val, expected
+    character(len=8) :: pass_str
+
+    if(all(val == expected)) then
+      pass_str = '(Passed)'
+    else
+      pass_str = '(Failed)'
+      failed = failed + 1
+    end if
+
+  end function test_int_1d
 
   function test_int_2d(val, expected) result(pass_str)
     integer, intent(in), dimension(:, :) :: val, expected
