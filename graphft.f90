@@ -677,6 +677,7 @@ contains
 
     if(allocated(dists)) deallocate(dists)
 
+    ! Reset any flag variables
     call this%reset()
 
     ! Flag nodes with only incoming edges as visited
@@ -702,16 +703,6 @@ contains
       this_path%length = 0
     end do
 
-    ! Check all edges were traversed
-    write(*,*) "Initial edge check"
-    do i = 1, this%n_edges()
-      this_edge => this%edges(i)%ptr
-      if( .not. this_edge%traversed) then
-        write(*,*) this_edge
-        ! call exit(1)
-      end if
-    end do
-
     ! If no paths were found, return
     if( .not. allocated(paths)) return
 
@@ -723,12 +714,11 @@ contains
 
     dists = paths%length
 
-    write(*,*)
-    write(*,*) "Final edge check"
     if(allocated(dists)) then
       do i = 1, this%n_edges()
         this_edge => this%edges(i)%ptr
         if( .not. this_edge%traversed) then
+          write(*,*) "Edge not traversed"
           write(*,*) this_edge
           call exit(1)
         end if
