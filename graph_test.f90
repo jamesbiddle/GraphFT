@@ -1,113 +1,170 @@
-program test
-  use graphft
+program graph_test
+  use GraphFT
   use kinds
   implicit none
 
-  type MyType
-    integer :: a
-  end type MyType
+  type(Graph) :: test_graph
+  type(Node), pointer :: test_node
 
-  type(Graph) :: bp_graph
-  type(Node), pointer :: my_node
-  integer, allocatable :: connections(:, :), dists(:)
-  integer :: i, n_nodes, d
+  integer :: failed = 0
+  integer, allocatable :: connections(:, :), expected(:, :)
+  integer :: distance
 
-  type(MyType), pointer :: t
-  type(MyType), pointer :: t_ptr1, t_ptr2
-  type(MyType), allocatable :: array1(:), array2(:)
+  write(*,*) "Test calling functions on an empty graph"
+  call empty_graph_tests()
 
-  call random_seed()
-
-  ! Simple graph
-  write(*,*) "Simple graph"
-  call Graph(bp_graph, 2)
-  call bp_graph%add_edge(1, 2, 4)
-  call bp_graph%add_edge(1, 2, 2)
-  call bp_graph%add_edge(1, 2, 3)
-  call bp_graph%add_node()
-
-  call bp_graph%bp_distances(dists)
-  write(*,*) "Dists:"
-  write(*,*) dists
   write(*,*)
+  write(*,*) "Test adding a single node"
+  call test_graph%add_node()
+  call populated_graph_tests(1, 0, 0)
 
-  call bp_graph%shortest_distance(1, 2, d)
-  write(*,*) "Shortest distance between nodes 1 and 2 = ", d
-
-
-  ! Double-touching graph
-  write(*,*) "Double-touching graph"
-  call Graph(bp_graph, 4)
-  call bp_graph%add_edge(1, 2)
-  call bp_graph%add_edge(1, 2)
-  call bp_graph%add_edge(2, 1)
-  call bp_graph%add_edge(2, 4)
-  call bp_graph%add_edge(3, 1)
-  call bp_graph%add_edge(3, 4)
-  call bp_graph%add_edge(3, 4)
-  call bp_graph%bp_distances(dists)
-  write(*,*) "Dists:"
-  write(*,*) dists
   write(*,*)
+  write(*,*) "Test removing a single node"
+  call test_graph%remove_node(1)
+  write(*, '(4x,a,i0,x,a)') "Number of nodes: ", test_graph%n_nodes(), test_int(test_graph%n_nodes(), 0)
 
-  call bp_graph%shortest_distance(1, 4, d)
-  write(*,*) "Shortest distance between nodes 1 and 4 = ", d
-
-
-  ! Ambiguity graph from paper
-  write(*,*) "Paper ambiguity graph"
-  call Graph(bp_graph, 6)
-  call bp_graph%add_edge(1, 5)
-  call bp_graph%add_edge(2, 5)
-  call bp_graph%add_edge(5, 6)
-  call bp_graph%add_edge(5, 6, 3)
-  call bp_graph%add_edge(6, 4)
-  call bp_graph%add_edge(6, 3, 2)
-
-  call bp_graph%add_edge(1, 4)
-  call bp_graph%add_edge(1, 4)
-
-  call bp_graph%add_edge(2, 3)
-  call bp_graph%add_edge(2, 3)
-
-  call bp_graph%bp_distances(dists)
-  write(*,*) "Dists:"
-  write(*,*) dists
   write(*,*)
+  write(*,*) "Retesting calling functions on an empty graph"
+  call empty_graph_tests()
 
-  ! Graph featuring a self-loop
-  write(*,*) "Self-loop graph"
-  call Graph(bp_graph, 3)
-  call bp_graph%add_edge(1, 2)
-  call bp_graph%add_edge(1, 3, 2)
-  call bp_graph%add_edge(1, 3)
-  call bp_graph%add_edge(2, 3)
-  call bp_graph%add_edge(2, 2, 3)
-
-  call bp_graph%bp_distances(dists)
-  write(*,*) "Dists:"
-  write(*,*) dists
   write(*,*)
+  write(*,*) "Test initialising graph with two nodes and an edge between them"
+  call Graph(test_graph, 2)
+  call test_graph%add_edge(1, 2)
+  allocate(expected(2, 2))
+  expected = 1
+  expected(1, 2) = 2
+  call populated_graph_tests(2, 1, 1, expected)
+  deallocate(expected)
+  deallocate(connections)
 
-  do i = 1, bp_graph%n_nodes()
-    call bp_graph%get_node(my_node, i, index=.true.)
-    write(*,*) my_node
-  end do
+  write(*,*)
+  write(*,*) "Test removing a node"
+  call test_graph%remove_node(2)
+  allocate(expected(2, 2))
+  expected(1, 1) = 1
+  expected(1, 2) = 0
+  call populated_graph_tests(1, 0, 0, expected)
+  deallocate(expected)
+  deallocate(connections)
 
-  ! do i = 1, bp_graph%n_nodes()
-  !   call bp_graph%get_node(my_node, i, index=.true.)
-  !   write(*,*) my_node%get_id(), my_node%is_bp()
-  ! end do
+  write(*,*)
+  write(*,*) "Test cleaning up a graph"
+  call Graph(test_graph, 1)
+  call test_graph%cleanup()
+  call empty_graph_tests()
 
-  call Graph(bp_graph, 4)
-  call bp_graph%add_edge(1, 2, 2)
-  call bp_graph%add_edge(2, 3, 3)
-  call bp_graph%add_edge(1, 4)
-  call bp_graph%add_edge(4, 3, 6)
+  write(*,*)
+  write(*,*) "Test removing an edge"
+  call Graph(test_graph, 2)
+  call test_graph%add_edge(1, 2)
+  call test_graph%remove_edge(1, 2)
+  call populated_graph_tests(2, 0, 0)
+  call test_graph%add_edge(1, 2, 3)
+  call test_graph%add_edge(1, 2, 5)
+  write(*,'(dt)') test_graph
 
-  call bp_graph%shortest_distance(3, 1, d)
-  write(*,*) "Shortest distance between nodes 1 and 3 = ", d
+  write(*,*)
+  if(failed == 0) then
+    write(*,*) 'Passed all tests'
+  else
+    write(*,'(a,i0,a)') 'Failed ', failed, ' test(s)'
+  end if
 
-  call bp_graph%delete_graph()
-  deallocate(dists)
-end program test
+contains
+
+  subroutine empty_graph_tests()
+    write(*, '(4x,a,i0,x,a)') "Number of nodes: ", test_graph%n_nodes(), test_int(test_graph%n_nodes(), 0)
+    write(*, '(4x,a,i0,x,a)') "Number of edges: ", test_graph%n_edges(), test_int(test_graph%n_edges(), 0)
+    write(*, '(4x,a)', advance='no') "Retrieving a node that doesn't exist: "
+    call test_graph%get_node(test_node, 1)
+    write(*, '(4x,a)', advance='no') "Removing a node that doesn't exist: "
+    call test_graph%remove_node(1)
+    write(*, '(4x,a)', advance='no') "Calculating connections: "
+    call test_graph%connections(connections)
+    write(*, '(4x,a)', advance='no') "Calculating shortest distance: "
+    call test_graph%shortest_distance(1, 1, distance)
+  end subroutine empty_graph_tests
+
+  subroutine populated_graph_tests(expect_nodes, expect_edges, expect_node1_edges, expect_connections)
+    integer, intent(in) :: expect_nodes, expect_edges, expect_node1_edges
+    integer, dimension(:, :), intent(in), optional :: expect_connections
+
+    integer :: i
+
+    write(*, '(4x,a,i0,x,a)') "Number of nodes: ", test_graph%n_nodes(), &
+        & test_int(test_graph%n_nodes(), expect_nodes)
+    write(*, '(4x,a,i0,x,a)') "Number of edges: ", test_graph%n_edges(), &
+        & test_int(test_graph%n_edges(), expect_edges)
+
+    write(*, '(4x,a)') "Retrieving a node: "
+    call test_graph%get_node(test_node, 1, index=.true.)
+    write(*, '(4x,a,i0,a,x,a)') "Node at index 1 has: ", test_node%n_edges(), ' edges', &
+        & test_int(test_node%n_edges(), expect_node1_edges)
+
+    if(present(expect_connections)) then
+      call test_graph%connections(connections)
+      write(*, '(4x,a)') "Calculating connections: "
+
+      do i = 1, size(connections, dim=2)
+        write(*,'(6x,2(i0,a,i0))') connections(1, i), ': ', connections(2, i)
+      end do
+      write(*,'(6x,a)') test_int_2d(connections, expect_connections)
+    end if
+
+  end subroutine populated_graph_tests
+
+
+  function test_int(val, expected) result(pass_str)
+    integer, intent(in) :: val, expected
+    character(len=8) :: pass_str
+
+    if(val == expected) then
+      pass_str = '(Passed)'
+    else
+      pass_str = '(Failed)'
+      failed = failed + 1
+    end if
+
+  end function test_int
+
+  function test_int_2d(val, expected) result(pass_str)
+    integer, intent(in), dimension(:, :) :: val, expected
+    character(len=8) :: pass_str
+
+    if(all(val == expected)) then
+      pass_str = '(Passed)'
+    else
+      pass_str = '(Failed)'
+      failed = failed + 1
+    end if
+
+  end function test_int_2d
+
+  function test_associated_node(val, other) result(pass_str)
+    type(Node), pointer :: val
+    type(Node), pointer, optional :: other
+    character(len=8) :: pass_str
+
+    type(Node), pointer :: other_
+
+    if (present(other)) then
+      if(associated(val, other)) then
+        pass_str = '(Passed)'
+      else
+        pass_str = '(Failed)'
+        failed = failed + 1
+      end if
+    else
+      if(associated(val)) then
+        pass_str = '(Passed)'
+      else
+        pass_str = '(Failed)'
+        failed = failed + 1
+      end if
+    end if
+
+
+  end function test_associated_node
+
+end program graph_test

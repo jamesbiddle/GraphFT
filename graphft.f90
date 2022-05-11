@@ -16,18 +16,26 @@ module graphft
     procedure :: get_node
     procedure :: n_nodes
     procedure :: n_edges => n_edges_graph
-    procedure :: remove_node
     procedure :: add_node
+    procedure :: remove_node
     procedure :: reindex_nodes
     procedure :: connections
     procedure :: shortest_distance
+    procedure :: cleanup
     procedure, private :: update_distances
     procedure, private :: get_node_index
     procedure :: delete_graph
     procedure :: add_edge => add_edge_id, add_edge_node
+    procedure :: remove_edge
+    procedure, private :: remove_edge_ptr
+    procedure, private :: get_edge_index => get_edge_index_graph
+
+    generic :: write(formatted) => write_graph
+    procedure :: write_graph
 
     ! Branching-point analysis
     procedure :: bp_distances
+    procedure :: output_graph
     procedure, private :: get_distance
     procedure, private :: reset
     procedure, private :: random_bp
@@ -42,11 +50,13 @@ module graphft
     integer :: distance = 0
   contains
     procedure :: get_id
-    procedure :: write_node
     procedure :: n_edges => n_edges_node
-    generic :: write(formatted) => write_node
     procedure :: edge_directions
+    procedure, private :: get_edge_index => get_edge_index_node
     final :: delete_node
+
+    generic :: write(formatted) => write_node
+    procedure :: write_node
 
     ! Branching point analysis
     procedure :: is_bp
@@ -67,6 +77,8 @@ module graphft
     integer :: weight = 1
     logical :: traversed = .false.
   contains
+    generic :: write(formatted) => write_edge
+    procedure :: write_edge
     ! Branching point analysis
     procedure :: priority
   end type Edge
@@ -149,8 +161,9 @@ contains
 
     if(index_) then
       if(id > this%n_nodes()) then
-        write(*,*) 'Node index larger than the number of nodes, aborting'
-        call exit()
+        write(*,*) 'Node index larger than the number of nodes, returning'
+        result_node => null()
+        return
       end if
       result_node => this%nodes(id)%ptr
       return
@@ -161,8 +174,8 @@ contains
       end do
     end if
 
-    write(*,'(a,i0,a)') 'Node with id ', id, ' not found, aborting'
-    call exit()
+    write(*,'(a,i0,a)') 'Node with id ', id, ' not found, returning'
+    result_node => null()
 
   end subroutine get_node
 
@@ -248,6 +261,9 @@ contains
     integer :: i, j
 
     call this%get_node(target_node, id)
+    if( .not. associated(target_node)) then
+      return
+    end if
 
     ! Remove the node from this%nodes and deallocate it
     idx = this%get_node_index(id)
@@ -364,6 +380,132 @@ contains
   end subroutine add_edge_id
 
 
+  function get_edge_index_graph(this, find_edge) result(idx)
+    ! Find a specified edge's index in the edge array
+    class(Graph) :: this
+    type(Edge), pointer :: find_edge
+    integer :: idx
+
+    integer :: i
+
+    do i = 1, this%n_edges()
+      if(associated(this%edges(i)%ptr, find_edge)) then
+        idx = i
+        return
+      end if
+    end do
+
+  end function get_edge_index_graph
+
+
+  subroutine remove_edge_ptr(this, del_edge)
+    ! Remove a specified edge from the graph
+    class(Graph) :: this
+    type(Edge), pointer :: del_edge
+
+    ! type(NodePtr), allocatable :: temp_nodes(:)
+    type(EdgePtr), allocatable :: temp_edges(:)
+    type(Node), pointer :: this_node
+    logical, allocatable :: mask(:)
+    type(Edge), pointer :: edge_ptr
+    integer :: n_edges, idx
+    integer :: i, j
+
+    edge_ptr => del_edge
+
+    ! Remove the edge from this%edges
+    idx = this%get_edge_index(del_edge)
+    allocate(mask(this%n_edges()))
+    mask = .true.
+    mask(idx) = .false.
+    call move_alloc(this%edges, temp_edges)
+    this%edges = pack(temp_edges, mask)
+    deallocate(temp_edges)
+    deallocate(mask)
+
+    do i = 1, this%n_nodes()
+      this_node => this%nodes(i)%ptr
+      ! See if this node connects to this edge
+      idx = this_node%get_edge_index(del_edge)
+      if(idx == -1) cycle
+
+      allocate(mask(this_node%n_edges()))
+      mask = .true.
+      mask(idx) = .false.
+      call move_alloc(this_node%edges, temp_edges)
+      this_node%edges = pack(temp_edges, mask)
+      deallocate(temp_edges)
+      deallocate(mask)
+    end do
+
+    deallocate(del_edge)
+
+  end subroutine remove_edge_ptr
+
+
+  subroutine remove_edge(this, start_id, end_id, weight)
+    ! Remove the first edge encountered between nodes with start_id and end_id
+    ! Optionally supply a weight to remove a specific edge in the case that multiple exist
+    class(Graph) :: this
+    integer, intent(in) :: start_id, end_id
+    integer, intent(in), optional :: weight
+
+    type(Node), pointer :: start_node, end_node
+    type(Edge), pointer :: this_edge
+    integer :: i
+
+    call this%get_node(start_node, start_id)
+    call this%get_node(end_node, end_id)
+
+    do i = 1, start_node%n_edges()
+      this_edge => start_node%edges(i)%ptr
+      if(associated(this_edge%end, end_node)) then
+        if(present(weight)) then
+          if(this_edge%weight == weight) then
+            call this%remove_edge_ptr(this_edge)
+            return
+          end if
+        else
+          call this%remove_edge_ptr(this_edge)
+          return
+        end if
+      end if
+    end do
+
+  end subroutine remove_edge
+
+
+  subroutine cleanup(this, reindex)
+    ! Remove all nodes with no edges from the graph
+    ! Optionally reindex the graph
+    class(Graph) :: this
+    logical, optional :: reindex
+
+    type(Node), pointer :: this_node
+    logical :: reindex_
+    integer :: counter
+
+    if(present(reindex)) then
+      reindex_ = reindex
+    else
+      reindex_ = .false.
+    end if
+
+    counter = 1
+    do while(.true.)
+      this_node => this%nodes(counter)%ptr
+      if(this_node%n_edges() == 0) then
+        call this%remove_node(this_node%id)
+      else
+        counter = counter + 1
+      end if
+
+      if(counter > this%n_nodes()) exit
+    end do
+
+  end subroutine cleanup
+
+
   subroutine reset(this)
     ! Reset the visited and distance variables on the nodes
     ! Reset the traversed flag on the edge
@@ -386,24 +528,31 @@ contains
   end subroutine reset
 
 
-  function connections(this)
+  subroutine connections(this, connections_arr)
     ! Generate a rank 2 array specifiying the number of connections from each node
-    ! connections(1,:) contains the node id's
-    ! connections(2,:) contains the corresponding counts
+    ! connections_arr(1,:) contains the node id's
+    ! connections_arr(2,:) contains the corresponding counts
     class(Graph) :: this
-    integer, allocatable :: connections(:, :)
+    integer, allocatable :: connections_arr(:, :)
 
     type(Node), pointer :: this_node
     integer :: i
 
-    allocate(connections(2, this%n_nodes()))
+    if(this%n_nodes() == 0) then
+      write(*,*) 'No nodes in graph, returning'
+      return
+    end if
+
+    if(allocated(connections_arr)) deallocate(connections_arr)
+    allocate(connections_arr(2, this%n_nodes()))
+
     do i = 1, this%n_nodes()
       this_node => this%nodes(i)%ptr
-      connections(1, i) = this_node%id
-      connections(2, i) = this_node%n_edges()
+      connections_arr(1, i) = this_node%id
+      connections_arr(2, i) = this_node%n_edges()
     end do
 
-  end function connections
+  end subroutine connections
 
 
   subroutine shortest_distance(this, id_start, id_end, d, index)
@@ -435,10 +584,12 @@ contains
 
     ! Locate the start node
     call this%get_node(start_node, id_start, index=index_)
+    if( .not. associated(start_node)) return
     start_node%distance = 0
 
     ! Locate the end node
     call this%get_node(target_node, id_end, index=index_)
+    if( .not. associated(target_node)) return
 
     ! Calculate the distance
     call this%update_distances(start_node, target_node)
@@ -507,11 +658,18 @@ contains
   end subroutine update_distances
 
 
+  subroutine simplify_cycles(this)
+    ! Perform a depth-first search to identify all cycles and replace them with a single edge
+    class(Graph) :: this
+
+  end subroutine simplify_cycles
+
   subroutine bp_distances(this, dists)
     class(Graph), intent(in) :: this
     integer, allocatable :: dists(:)
 
     type(Node), pointer :: this_node, start_bp
+    type(Edge), pointer :: this_edge
     integer, allocatable :: directions(:)
     integer, allocatable :: temp_dists(:)
     integer :: dist
@@ -533,8 +691,6 @@ contains
       call this%random_bp(start_bp)
       ! If no unvisited branching point can be found, we're done
       if( .not. associated(start_bp)) exit
-      write(*,*)
-      write(*,'(a,i0)') "start node:", start_bp%get_id()
 
       ! Calculate the distance from this BP
       dist = 0
@@ -547,6 +703,19 @@ contains
     end do
 
     dists = temp_dists
+
+    ! Check all edges were traversed
+    if(allocated(dists)) then
+      do i = 1, this%n_edges()
+        this_edge => this%edges(i)%ptr
+        if( .not. this_edge%traversed) then
+          write(*,*) "Edge not traversed"
+          write(*,*) this_edge
+          call exit(1)
+        end if
+      end do
+    end if
+
     call this%reset()
 
   end subroutine bp_distances
@@ -577,7 +746,6 @@ contains
 
     ! Select the next node
     next_node => next_edge%end
-    write(*,'(a,i0)') "next node: ", next_node%id
 
     ! If the next node is a branching point, check if it is visited and return
     if(next_node%is_bp()) then
@@ -616,8 +784,77 @@ contains
   end subroutine random_bp
 
 
+  subroutine output_graph(this, unit, x, key)
+    ! Output graph as a file suitable for being read into python
+    class(Graph) :: this
+    integer, intent(in) :: unit
+    integer, intent(in), optional :: x ! Slice number
+    integer, intent(in), optional :: key ! Used to distinguish separate graphs in the same slice
+
+    ! Local vars
+    type(Node), pointer :: this_node
+    type(Edge), pointer :: this_edge
+    integer, allocatable :: directions(:)
+    integer :: i, j, dist, this_id, neighbour_id
+    character(len=1) :: dir
+    integer :: x_, key_
+
+    call this%reset()
+
+    if(present(key)) then
+      key_ = key
+    else
+      key_ = 1
+    end if
+
+    if(present(x)) then
+      x_ = x
+    else
+      x_ = 1
+    end if
+
+    do i = 1, this%n_nodes()
+      this_node => this%nodes(i)%ptr
+      call this_node%edge_directions(directions)
+      do j = 1, this_node%n_edges()
+        ! Only save outgoing edges or self-loops
+        this_edge => this_node%edges(j)%ptr
+        ! Check for traversal so that self-loops are only output once
+        if((directions(j) .ne. 0) .and. ( .not. this_edge%traversed)) then
+          write(unit, '(5(i8,x))') this_edge%start%id, this_edge%end%id, this_edge%weight, x_, key_
+          this_edge%traversed = .true.
+        end if
+      end do
+    end do
+
+    call this%reset()
+  end subroutine output_graph
+
+
+  subroutine write_graph(this, unit, iotype, v_list, iostat, iomsg)
+    class(Graph), intent(in) :: this     ! Object to write.
+    integer, intent(in) :: unit         ! Internal unit to write to.
+    character(*), intent(in) :: iotype  ! LISTDIRECTED or DTxxx
+    integer, intent(in) :: v_list(:)    ! parameters from fmt spec.
+    integer, intent(out) :: iostat      ! non zero on error, etc.
+    character(*), intent(inout) :: iomsg  ! define if iostat non zero.
+
+    ! Local vars
+    type(Node), pointer :: this_node
+    character(len=256) :: output
+    integer :: i
+
+    do i = 1, this%n_nodes()
+      call this%get_node(this_node, i, index=.true.)
+      write (unit, "(dt)", IOSTAT=iostat, IOMSG=iomsg) this_node
+    end do
+
+  end subroutine write_graph
+
+
+
   subroutine delete_graph(this)
-    ! Graph destructor taht can be called manually
+    ! Graph destructor that can be called manually
     class(Graph) :: this
     integer :: i
 
@@ -702,6 +939,27 @@ contains
   end function n_edges_node
 
 
+  function get_edge_index_node(this, find_edge) result(idx)
+    ! Find a specified edge's index in the edge array
+    class(Node) :: this
+    type(Edge), pointer :: find_edge
+    integer :: idx
+
+    integer :: i
+
+    ! Return -1 if the edge isn't found
+    idx = -1
+
+    do i = 1, this%n_edges()
+      if(associated(this%edges(i)%ptr, find_edge)) then
+        idx = i
+        return
+      end if
+    end do
+
+  end function get_edge_index_node
+
+
   subroutine edge_directions(this, directions)
     ! Return an array identifying the direction of each edge connected to this node
     ! 0 indicates incoming edges, 1 indicates outgoing, 2 indicates a self-connection
@@ -742,14 +1000,14 @@ contains
     character(len=:), allocatable :: output
     integer :: i
 
-    write(substr, '(i0,a)') this%id, NEW_LINE('a')
+    write(substr, '(a,i0,a)') 'Node: ', this%id, NEW_LINE('a')
     output = trim(substr)
     do i = 1, this%n_edges()
       if(this%edges(i)%ptr%end%id == this%id) then
-        write(substr, '(x,a,i0,a,i0,a)') ' <-', this%edges(i)%ptr%weight, '- ', &
+        write(substr, '(i0,a,i0,a,i0,a)') this%id, ' <-', this%edges(i)%ptr%weight, '- ', &
             this%edges(i)%ptr%start%id, NEW_LINE('a')
       else
-        write(substr, '(x,a,i0,a,i0,a)') ' -', this%edges(i)%ptr%weight, '-> ', &
+        write(substr, '(i0,a,i0,a,i0,a)') this%id, ' -', this%edges(i)%ptr%weight, '-> ', &
             this%edges(i)%ptr%end%id, NEW_LINE('a')
       end if
       output = output//trim(substr)
@@ -778,7 +1036,7 @@ contains
 
     logical, allocatable :: mask(:)
     type(Edge), pointer :: this_edge
-    logical :: use_priority
+    integer :: highest_priority
     integer :: edge_count, rand_idx
     integer :: i
 
@@ -786,17 +1044,12 @@ contains
     allocate(mask(edge_count))
 
     ! Check if there are any un-traversed outgoing priority edges
-    use_priority = .false.
+    highest_priority = 0
     do i = 1, edge_count
       this_edge => this%edges(i)%ptr
       if(this_edge%traversed) cycle
       if( .not. associated(this_edge%start, this)) cycle
-
-      if(this_edge%priority()) then
-        use_priority = .true.
-        exit
-      end if
-
+      if(this_edge%priority() > highest_priority) highest_priority = this_edge%priority()
     end do
 
     mask = .false.
@@ -808,7 +1061,7 @@ contains
       ! Note that due to self-loops, this is not equivalent to the edge ending at this node
       if( .not. associated(this_edge%start, this)) cycle
       ! If the edge is not priority and there are priority edges, skip it
-      if(( .not. this_edge%priority() .and. use_priority)) cycle
+      if(this_edge%priority() .ne. highest_priority) cycle
       mask(i) = .true.
     end do
 
@@ -878,14 +1131,46 @@ contains
   end function initialise_edge
 
 
-  logical function priority(this)
+  integer function priority(this)
     ! Determine if this edge has priority
-    ! Edges have priority if they end at a node with n_edges > 3
-    class(Edge) :: this
+    ! The highest priority edges will be traversed first
+    class(Edge), target :: this
 
-    priority = .false.
-    if(this%end%n_edges() > 3) priority = .true.
+    type(Node), pointer :: end_node
+    type(Edge), pointer :: other_edge
+    integer :: i
+
+    ! Default priority
+    priority = 0
+    ! Touching points
+    if(this%end%n_edges() > 3) priority = 1
+
+    ! Cycles
+    end_node => this%end
+    do i = 1, end_node%n_edges()
+      other_edge => end_node%edges(i)%ptr
+      if(associated(other_edge, this)) cycle
+      if(associated(other_edge%end, this%start)) priority = 2
+    end do
+    ! Self-loops
+    if(associated(this%start, this%end)) priority = 3
 
   end function priority
+
+  subroutine write_edge(this, unit, iotype, v_list, iostat, iomsg)
+    class(Edge), intent(in) :: this     ! Object to write.
+    integer, intent(in) :: unit         ! Internal unit to write to.
+    character(*), intent(in) :: iotype  ! LISTDIRECTED or DTxxx
+    integer, intent(in) :: v_list(:)    ! parameters from fmt spec.
+    integer, intent(out) :: iostat      ! non zero on error, etc.
+    character(*), intent(inout) :: iomsg  ! define if iostat non zero.
+
+    ! Local vars
+    character(len=256) :: output
+
+    write(output, '(i0,a,i0,a,i0)') this%start%id, ' -', this%weight, '-> ', this%end%id
+
+    write (unit, "(a)", IOSTAT=iostat, IOMSG=iomsg) trim(output)
+  end subroutine write_edge
 
 end module graphft
